@@ -642,6 +642,8 @@ def score_trade_confidence(rsi, trend_strength, retracement_ok):
     risk_level = "Aggressive" if rsi > 70 or rsi < 30 else "Moderate" if confidence == "Medium" else "Conservative"
     return confidence, risk_level
 # === SIGNAL CONFIDENCE & RISK SCORING END ===
+
+
 from telegram.ext import CommandHandler
 import requests
 
