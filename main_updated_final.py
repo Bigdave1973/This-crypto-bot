@@ -642,3 +642,117 @@ def score_trade_confidence(rsi, trend_strength, retracement_ok):
     risk_level = "Aggressive" if rsi > 70 or rsi < 30 else "Moderate" if confidence == "Medium" else "Conservative"
     return confidence, risk_level
 # === SIGNAL CONFIDENCE & RISK SCORING END ===
+from telegram.ext import CommandHandler
+import requests
+
+def parse_friend_signal(text):
+    signal = {}
+    for line in text.splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key in ["entry", "sl", "tp", "rsi", "ema20"]:
+                try:
+                    signal[key] = float(value)
+                except:
+                    pass
+            elif key == "time":
+                signal["timestamp"] = value
+            else:
+                signal[key] = value.upper() if key in ["pair", "direction", "trend"] else value
+    return signal
+
+def get_current_price(pair):
+    id_map = {
+        "DOGWIFCOIN": "dogwifcoin",
+        "WIF": "dogwifcoin"
+    }
+    coin_id = id_map.get(pair.upper(), pair.lower())
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+    try:
+        res = requests.get(url)
+        data = res.json()
+        return float(data[coin_id]["usd"])
+    except:
+        return None
+
+def friend_signal_command(update, context):
+    message = update.message.text
+    signal_data = parse_friend_signal(message)
+
+    required_fields = ["pair", "direction", "entry", "sl", "tp"]
+    if not all(field in signal_data for field in required_fields):
+        update.message.reply_text("⚠️ Missing required fields (pair, direction, entry, sl, tp). Please check your format.")
+        return
+
+    filepath = "memory/friend_signals.json"
+    os.makedirs("memory", exist_ok=True)
+    if os.path.exists(filepath):
+        with open(filepath, "r") as f:
+            existing = json.load(f)
+    else:
+        existing = []
+
+    existing.append(signal_data)
+    with open(filepath, "w") as f:
+        json.dump(existing, f, indent=4)
+
+    update.message.reply_text("✅ Friend trade logged and learned from.\nChecking for live viability...")
+
+    current_price = get_current_price(signal_data["pair"])
+    if current_price is None:
+        update.message.reply_text("⚠️ Couldn't fetch current price. Skipping live trade.")
+        return
+
+    entry = signal_data["entry"]
+    direction = signal_data["direction"]
+    sl = signal_data["sl"]
+    tp = signal_data["tp"]
+    rsi = signal_data.get("rsi", "?")
+    trend = signal_data.get("trend", "?")
+    ema = signal_data.get("ema20", "?")
+
+    spread = abs(current_price - entry) / entry
+    if spread <= 0.01:
+        trade = {
+            "pair": signal_data["pair"],
+            "direction": direction,
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "reason": f"Friend Signal - {signal_data.get('reason', 'No reason')}",
+            "rsi": rsi,
+            "trend": trend,
+            "ema20": ema,
+            "status": "OPEN",
+            "timestamp": signal_data["timestamp"],
+            "live_price_at_entry": current_price,
+            "source": "friend"
+        }
+
+        trade_log_path = "memory/trade_log.json"
+        if os.path.exists(trade_log_path):
+            with open(trade_log_path, "r") as f:
+                trades = json.load(f)
+        else:
+            trades = []
+
+        trades.append(trade)
+        with open(trade_log_path, "w") as f:
+            json.dump(trades, f, indent=4)
+
+        update.message.reply_text(
+            f"🚨 Friend Trade Signal is still viable — executing now!\n"
+            f"🪙 {signal_data['pair']} {direction} @ ${entry}\n"
+            f"📊 RSI: {rsi} | EMA20: {ema} | Trend: {trend}\n"
+            f"🛡️ SL: {sl} | TP: {tp}\n"
+            f"📉 Current Price: ${current_price:.4f}"
+        )
+    else:
+        update.message.reply_text(
+            f"📉 Current price ${current_price:.4f} is too far from entry (${entry}).\n"
+            "Signal saved, but not trading it now."
+        )
+
+# 🔗 REGISTER COMMAND 
